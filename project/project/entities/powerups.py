@@ -18,6 +18,8 @@ class PowerUp(GameObject):
         self.typ=random.choice(["Shield","SpeedBoost","RapidFire","ExtraLife","Bomb"])
         self.kolor=KOLORY_POWERUPOW[self.typ]
 
+        self.hitbox=pygame.Rect(int(self.x)+8,int(self.y)+8,16,16)
+
         self.czas_powstania=pygame.time.get_ticks()
         self.aktywny=True
 
@@ -27,4 +29,4 @@ class PowerUp(GameObject):
 
     def draw(self,okno):
         if self.aktywny:
-            pygame.draw.circle(okno,self.kolor,(self.x+16,self.y+16),10)
+            pygame.draw.circle(okno,self.kolor,(int(self.x)+16,int(self.y)    +16),10)

@@ -4,13 +4,28 @@ from entities.tank import Tank
 from constants import GRACZ_COOLDOWN_STRZALU, GRACZ_POCZATKOWE_ZYCIA, GRACZ_PREDKOSC, KIERUNEK_DOL,KIERUNEK_GORA, KIERUNEK_LEWO, KIERUNEK_PRAWO, ROZMIAR_KAFELKA, ZIELONY  
 
 class PlayerTank(Tank):
-    def __init__(self,x,y):
-        super().__init__(x,y,hp=1,predkosc=GRACZ_PREDKOSC,kierunek=KIERUNEK_GORA,cooldown_strzalu=GRACZ_COOLDOWN_STRZALU,poziom=1,liczba_zyc=GRACZ_POCZATKOWE_ZYCIA)
+    def __init__(self, x, y):
+        super().__init__(x, y, hp=1, kierunek=KIERUNEK_GORA, predkosc=2, cooldown_strzalu=500, poziom=1, liczba_zyc=3)
+        self.hitbox = pygame.Rect(self.x + 2, self.y + 2, ROZMIAR_KAFELKA - 4, ROZMIAR_KAFELKA - 4)
+        self.ostatni_strzal = 0
+        
+        self.tarcza_aktywna = False
+        self.koniec_tarczy = 0
+        self.koniec_rapid_fire = 0
 
-        self.hitbox=pygame.Rect(self.x+2,self.y+2,ROZMIAR_KAFELKA-4,ROZMIAR_KAFELKA-4)
-        self.ostatni_strzal=0
+    def update(self,sciany=None):
+        obecny_czas = pygame.time.get_ticks()
+        
+        
+        if self.tarcza_aktywna and obecny_czas > self.koniec_tarczy:
+            self.tarcza_aktywna = False
+            
+        
+        if obecny_czas > self.koniec_rapid_fire and self.cooldown_strzalu < 500:
+            self.cooldown_strzalu = 500
 
-    def update(self,sciany):
+
+
         if sciany is None:
             sciany=[]
 
@@ -51,6 +66,9 @@ class PlayerTank(Tank):
 
     def draw(self,okno):
         pygame.draw.rect(okno,ZIELONY,self.hitbox)
+
+        if self.tarcza_aktywna:
+            pygame.draw.rect(okno, (0, 255, 255), self.hitbox, 3)
 
     def strzelaj(self):
         obecny_czas=pygame.time.get_ticks()
