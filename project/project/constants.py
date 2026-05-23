@@ -1,5 +1,5 @@
 #okno gry
-SZEROKOSC_OKNA=800
+SZEROKOSC_OKNA=1000
 WYSOKOSC_OKNA=600
 
 #odswiezanie gry

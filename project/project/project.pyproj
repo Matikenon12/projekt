@@ -35,6 +35,7 @@
     <Compile Include="environment.py" />
     <Compile Include="main.py" />
     <Compile Include="map\levels.py" />
+    <Compile Include="map\spritesheet.py" />
     <Compile Include="map\tile.py" />
     <Compile Include="map\__init__.py" />
   </ItemGroup>
