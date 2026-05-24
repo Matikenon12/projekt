@@ -1,17 +1,22 @@
 import pygame
 import random
+import os
 
-from constants import CZARNY, FPS, SZEROKOSC_OKNA, WYSOKOSC_OKNA, ROZMIAR_KAFELKA
+from constants import CZARNY, FPS, SZEROKOSC_OKNA, WYSOKOSC_OKNA, ROZMIAR_KAFELKA, CIEMNY_SZARY, BIALY, ZOLTY, JASNY_SZARY, JASNY_CZERWONY
 from entities.player_tank import PlayerTank
 from entities.enemy_tank import EnemyTank, BasicTank, FastTank, ArmoredTank, ShooterTank
 from entities.base import Base
 from entities.powerups import PowerUp
 from map.levels import WSZYSTKIE_POZIOMY
 from map.tile import BrickWall, SteelWall, Water, Bush, Ice
+from assets.sounds import AudioManager
+from map.spritesheet import arkusz_grafik
+from utils.collision import sprawdz_wszystkie_kolizje  # DODANY IMPORT SYSTEMU KOLIZJI
 
 class Environment:
     def __init__(self):
         pygame.init()
+        
         self.okno = pygame.display.set_mode((SZEROKOSC_OKNA, WYSOKOSC_OKNA))
         pygame.display.set_caption("TANKS 1990 / BATTLE CITY")
 
@@ -19,8 +24,8 @@ class Environment:
         self.zegar = pygame.time.Clock()
 
         try:
-            self.czcionka_hud = pygame.font.Font("czcionka.ttf", 16)
-            self.czcionka_duza = pygame.font.Font("czcionka.ttf", 40)
+            self.czcionka_hud = pygame.font.Font("kongtext.ttf", 16)
+            self.czcionka_duza = pygame.font.Font("kongtext.ttf", 40)
         except FileNotFoundError:
             self.czcionka_hud = pygame.font.SysFont("Courier", 20, bold=True)
             self.czcionka_duza = pygame.font.SysFont("Courier", 50, bold=True)
@@ -30,6 +35,8 @@ class Environment:
 
         self.aktualny_numer_poziomu = 0
         self.wynik = 0
+        self.wynik_na_poczatku_poziomu = 0 
+        self.zabite_czolgi = {"BasicTank": 0, "FastTank": 0, "ArmoredTank": 0, "ShooterTank": 0}
 
         self.stan_gry = "EKRAN_STARTOWY" 
         self.opcje_menu = ["NOWA GRA", "POZIOM 1", "POZIOM 2", "POZIOM 3"]
@@ -39,6 +46,14 @@ class Environment:
         self.czas_wyswietlania_ekranu = 0
         self.czas_startu_rundy = 0
         self.sekundy_w_rundzie = 0
+        
+        self.dzwiek_jazdy_gra = False
+        self.audio = AudioManager()
+
+        # --- ZMIENNE DO ANIMACJI KURTYNY ---
+        self.kurtyna_y = 600           
+        self.kurtyna_aktywna = False   
+        self.stan_konca_gry = None     
 
         self.zaladuj_poziom(self.aktualny_numer_poziomu)
 
@@ -46,6 +61,9 @@ class Environment:
         self.obiekty_w_grze = []
         self.sciany = []
         self.przeciwnicy = []
+        
+        self.zabite_czolgi = {"BasicTank": 0, "FastTank": 0, "ArmoredTank": 0, "ShooterTank": 0}
+        self.wynik_na_poczatku_poziomu = self.wynik
 
         dane_poziomu = WSZYSTKIE_POZIOMY[numer]
         mapa = dane_poziomu["mapa"]
@@ -92,8 +110,10 @@ class Environment:
                 self.zaladuj_poziom(self.aktualny_numer_poziomu)
             else:
                 self.stan_gry = "WYGRANA"
+                self.audio.play_sound('wygrana') 
         else:
             self.stan_gry = "WYGRANA"
+            self.audio.play_sound('wygrana')     
 
     def obsluga_zdarzen(self):
         for event in pygame.event.get():
@@ -103,11 +123,15 @@ class Environment:
                 if self.stan_gry == "EKRAN_STARTOWY":
                     if event.key == pygame.K_UP:
                         self.wybrana_opcja = (self.wybrana_opcja - 1) % len(self.opcje_menu)
+                        self.audio.play_sound('wybor')
                     elif event.key == pygame.K_DOWN:
                         self.wybrana_opcja = (self.wybrana_opcja + 1) % len(self.opcje_menu)
+                        self.audio.play_sound('wybor')
                     elif event.key in [pygame.K_SPACE, pygame.K_RETURN]:
+                        self.audio.play_sound('wybor')
                         if self.wybrana_opcja == 0:  
                             self.wynik = 0
+                            self.wynik_na_poczatku_poziomu = 0
                             self.aktualny_numer_poziomu = 0
                             self.tryb_kampanii = True 
                         elif self.wybrana_opcja == 1: 
@@ -124,12 +148,34 @@ class Environment:
                         self.stan_gry = "EKRAN_POZIOMU"
                         self.czas_wyswietlania_ekranu = pygame.time.get_ticks() + 2500
                         
+                elif self.stan_gry == "PODSUMOWANIE_POZIOMU":
+                    if event.key in [pygame.K_SPACE, pygame.K_RETURN]:
+                        if getattr(self, 'podsumowanie_gotowe', False):
+                            self.audio.stop_sound('wygrana')
+                            self.nastepny_poziom()
+                        else:
+                            self.podsumowanie_etap = 4
+                            self.wyswietlany_wynik = self.wynik
+                            self.podsumowanie_gotowe = True
+                        
                 elif self.stan_gry in ["KONIEC_GRY", "WYGRANA"]:
                     if event.key in [pygame.K_SPACE, pygame.K_RETURN]:
                         self.stan_gry = "EKRAN_STARTOWY"
 
     def aktualizacja(self):
         obecny_czas = pygame.time.get_ticks()
+
+        # JEŒLI KURTYNA WJE¯D¯A LUB TRWA, ZAMRA¯AMY RUCH CZO£GÓW I POCISKÓW
+        if getattr(self, 'kurtyna_aktywna', False):
+            if getattr(self, 'dzwiek_jazdy_gra', False):
+                self.audio.stop_sound('jazda')
+                self.dzwiek_jazdy_gra = False
+            return
+
+        if self.stan_gry != "GRA":
+            if getattr(self, 'dzwiek_jazdy_gra', False):
+                self.audio.stop_sound('jazda')
+                self.dzwiek_jazdy_gra = False
 
         if self.stan_gry == "EKRAN_STARTOWY":
             return
@@ -140,10 +186,42 @@ class Environment:
                 self.czas_startu_rundy = obecny_czas
             return
 
+        if self.stan_gry == "PODSUMOWANIE_POZIOMU":
+            if not getattr(self, 'podsumowanie_gotowe', False):
+                if obecny_czas > getattr(self, 'podsumowanie_ostatnia_zmiana', 0):
+                    if self.podsumowanie_etap < 4:
+                        typ = self.podsumowanie_typy[self.podsumowanie_etap]
+                        cel = self.zabite_czolgi.get(typ, 0)
+                        
+                        if self.podsumowanie_licznik < cel:
+                            self.podsumowanie_licznik += 1
+                            self.audio.play_sound('wybor') 
+                            self.podsumowanie_ostatnia_zmiana = obecny_czas + 150 
+                        else:
+                            self.podsumowanie_etap += 1
+                            self.podsumowanie_licznik = 0
+                            self.podsumowanie_ostatnia_zmiana = obecny_czas + 300 
+                            
+                    elif self.podsumowanie_etap == 4:
+                        if self.wyswietlany_wynik < self.wynik:
+                            krok = max(10, (self.wynik - self.wyswietlany_wynik) // 10) 
+                            self.wyswietlany_wynik = min(self.wyswietlany_wynik + krok, self.wynik)
+                            self.audio.play_sound('wybor') 
+                            self.podsumowanie_ostatnia_zmiana = obecny_czas + 50
+                        else:
+                            self.podsumowanie_gotowe = True
+            return
+
         if self.stan_gry in ["KONIEC_GRY", "WYGRANA"]:
             return
 
-        # SPAWN WROGOW
+        # SPRAWDZANIE WARUNKU WYGRANEJ POZIOMU Z KURTYN¥
+        if len(self.przeciwnicy) == 0 and len(self.kolejka_wrogow) == 0 and self.stan_gry == "GRA":
+            self.kurtyna_aktywna = True
+            self.stan_konca_gry = "WYGRANA"
+            self.audio.play_sound('wygrana')
+            return
+
         if hasattr(self, 'kolejka_wrogow') and len(self.kolejka_wrogow) > 0 and obecny_czas - self.ostatni_spawn > 3000 and len(self.przeciwnicy) < 4:
             typ_wroga = self.kolejka_wrogow.pop(0)
             wx = random.choice([1, 23]) * ROZMIAR_KAFELKA
@@ -157,10 +235,8 @@ class Environment:
             self.przeciwnicy.append(nowy_wrog)
             self.ostatni_spawn = obecny_czas
 
-        # LOSOWY SPAWN BONUSÓW NA PUSTYCH KAFELKACH
         if hasattr(self, 'ostatni_spawn_bonusu') and obecny_czas - self.ostatni_spawn_bonusu > 12000:
             self.ostatni_spawn_bonusu = obecny_czas
-            
             wolne_miejsca = []
             for x in range(0, 800, ROZMIAR_KAFELKA):
                 for y in range(0, 600, ROZMIAR_KAFELKA):
@@ -176,125 +252,42 @@ class Environment:
             if wolne_miejsca:
                 bx, by = random.choice(wolne_miejsca)
                 nowy_bonus = PowerUp(bx, by)
-                # --- ZMIANA: Zapisujemy, kiedy ma wygasn¹æ (za 10000ms = 10s) ---
                 nowy_bonus.czas_wygasniecia = obecny_czas + 10000 
                 self.obiekty_w_grze.append(nowy_bonus)
 
-        # STRZELANIE
         keys = pygame.key.get_pressed()
+        ruch_gracza = keys[pygame.K_w] or keys[pygame.K_UP] or keys[pygame.K_s] or keys[pygame.K_DOWN] or keys[pygame.K_a] or keys[pygame.K_LEFT] or keys[pygame.K_d] or keys[pygame.K_RIGHT]
+        ruch_wrogow = len(self.przeciwnicy) > 0
+        
+        if ruch_gracza or ruch_wrogow:
+            if not getattr(self, 'dzwiek_jazdy_gra', False):
+                self.audio.play_sound('jazda', loops=-1)
+                self.dzwiek_jazdy_gra = True
+        else:
+            if getattr(self, 'dzwiek_jazdy_gra', False):
+                self.audio.stop_sound('jazda')
+                self.dzwiek_jazdy_gra = False
+
         if keys[pygame.K_SPACE]:
             p = self.gracz.strzelaj()
-            if p: self.obiekty_w_grze.append(p)
+            if p: 
+                self.obiekty_w_grze.append(p)
+                self.audio.play_sound('strzal') 
 
         for wrog in self.przeciwnicy:
             p = wrog.strzelaj()
             if p: self.obiekty_w_grze.append(p)
 
-        # RUCH I KOLIZJE CZOLGOW
         przeszkody_dla_czolgow = self.sciany + [self.baza]
         for obiekt in self.obiekty_w_grze:
             if isinstance(obiekt, EnemyTank): obiekt.update(przeszkody_dla_czolgow, self.baza, self.gracz)
             elif obiekt == self.gracz: obiekt.update(przeszkody_dla_czolgow)
             else: obiekt.update()
 
-        # KOLIZJE POCISK-POCISK
-        pociski = [obj for obj in self.obiekty_w_grze if hasattr(obj, 'kierunek') and hasattr(obj, 'wlasciciel') and obj.aktywny]
-        for i in range(len(pociski)):
-            for j in range(i + 1, len(pociski)):
-                p1 = pociski[i]
-                p2 = pociski[j]
-                if p1.hitbox.colliderect(p2.hitbox) and p1.aktywny and p2.aktywny:
-                    if p1.wlasciciel != p2.wlasciciel:
-                        p1.aktywny = False
-                        p2.aktywny = False
+        # --- WYWO£ANIE NOWEGO ZEWNÊTRZNEGO SYSTEMU KOLIZJI I WYBUCHÓW ---
+        sprawdz_wszystkie_kolizje(self)
 
-        # LOGIKA POCISKOW
-        for obj in pociski:
-            if not obj.aktywny: continue
-            
-            if obj.hitbox.colliderect(self.baza.hitbox) and not self.baza.zniszczona:
-                obj.aktywny = False
-                self.baza.zniszczona = True
-                self.stan_gry = "KONIEC_GRY"
-
-            for sciana in self.sciany:
-                if obj.hitbox.colliderect(sciana.hitbox) and sciana.blokuje_pociski:
-                    obj.aktywny = False
-                    if getattr(sciana, 'zniszczalny', False):
-                        if sciana in self.obiekty_w_grze: self.obiekty_w_grze.remove(sciana)
-                        if sciana in self.sciany: self.sciany.remove(sciana)
-                    break
-
-            if obj.wlasciciel == "wrog" and obj.hitbox.colliderect(self.gracz.hitbox) and obj.aktywny:
-                obj.aktywny = False
-                if not getattr(self.gracz, 'tarcza_aktywna', False):
-                    self.gracz.liczba_zyc -= 1
-                    if self.gracz.liczba_zyc <= 0: self.stan_gry = "KONIEC_GRY"
-
-            if obj.wlasciciel == "gracz" and obj.aktywny:
-                for wrog in self.przeciwnicy:
-                    if obj.hitbox.colliderect(wrog.hitbox):
-                        obj.aktywny = False
-                        wrog.hp -= 1
-                        if wrog.hp <= 0:
-                            self.przeciwnicy.remove(wrog)
-                            self.obiekty_w_grze.remove(wrog)
-                            self.wynik += 100
-                            if random.randint(1, 100) > 50:
-                                nowy_bonus = PowerUp(wrog.x, wrog.y)
-                                # --- ZMIANA: Drop z wroga te¿ wygasa po 10s! ---
-                                nowy_bonus.czas_wygasniecia = obecny_czas + 10000
-                                self.obiekty_w_grze.append(nowy_bonus)
-                        break
-
-        # ZBIERANIE I WYGASANIE BONUSÓW
-        for p_up in self.obiekty_w_grze:
-            if isinstance(p_up, PowerUp) and p_up.aktywny:
-                
-                # --- ZMIANA: Niszczymy bonus, jeœli minê³o 10 sekund ---
-                if hasattr(p_up, 'czas_wygasniecia') and obecny_czas > p_up.czas_wygasniecia:
-                    p_up.aktywny = False
-                    continue # Bonus znikn¹³, wiêc przechodzimy do kolejnego obiektu
-                
-                # Sprawdzamy gracza
-                if self.gracz.hitbox.colliderect(p_up.hitbox):
-                    p_up.aktywny = False
-                    self.wynik += 500
-                    
-                    if p_up.typ in ["ExtraLife", "Bomb"]:
-                        self.powiadomienie_bonus = "1-UP" if p_up.typ == "ExtraLife" else "BOMB"
-                        self.koniec_powiadomienia = pygame.time.get_ticks() + 3000
-
-                    if p_up.typ == "ExtraLife": self.gracz.liczba_zyc += 1
-                    elif p_up.typ == "Bomb":
-                        for w in self.przeciwnicy:
-                            self.wynik += 100
-                            if w in self.obiekty_w_grze: self.obiekty_w_grze.remove(w)
-                        self.przeciwnicy.clear()
-                    elif p_up.typ == "SpeedBoost": self.gracz.predkosc += 1
-                    elif p_up.typ == "Shield":
-                        self.gracz.tarcza_aktywna = True
-                        self.gracz.koniec_tarczy = pygame.time.get_ticks() + 10000
-                    elif p_up.typ == "RapidFire":
-                        self.gracz.cooldown_strzalu = 200
-                        self.gracz.koniec_rapid_fire = pygame.time.get_ticks() + 10000
-
-                # Sprawdzamy wrogów
-                if p_up.aktywny:
-                    for wrog in self.przeciwnicy:
-                        if wrog.hitbox.colliderect(p_up.hitbox):
-                            p_up.aktywny = False 
-                            if p_up.typ == "Bomb":
-                                if not getattr(self.gracz, 'tarcza_aktywna', False):
-                                    self.gracz.liczba_zyc -= 1
-                                    if self.gracz.liczba_zyc <= 0: 
-                                        self.stan_gry = "KONIEC_GRY"
-                            elif p_up.typ == "SpeedBoost": wrog.predkosc += 1
-                            elif p_up.typ == "ExtraLife": wrog.hp += 1
-                            elif p_up.typ == "RapidFire": wrog.cooldown_strzalu = 500
-                            break 
-
-        # CZYSZCZENIE EKRANU
+        # Filtrowanie i usuwanie nieaktywnych œmieci z planszy
         nowa = []
         for o in self.obiekty_w_grze:
             if hasattr(o, 'aktywny') and not o.aktywny: continue
@@ -302,42 +295,106 @@ class Environment:
             nowa.append(o)
         self.obiekty_w_grze = nowa
 
-        if len(self.przeciwnicy) == 0 and len(self.kolejka_wrogow) == 0:
-            self.nastepny_poziom()
+    def obsluga_animacji_kurtyny(self):
+        if not getattr(self, 'kurtyna_aktywna', False):
+            return
+
+        # Zwijanie kurtyny do góry
+        if self.kurtyna_y > 0:
+            self.kurtyna_y -= 10
+            if self.kurtyna_y < 0:
+                self.kurtyna_y = 0
+
+        # Rysowanie czarnego prostok¹ta
+        pygame.draw.rect(self.okno, (0, 0, 0), (0, self.kurtyna_y, 1000, 600 - self.kurtyna_y))
+
+        # Kiedy wjedzie na sam¹ górê - rysujemy tekst i czekamy na klawisz
+        if self.kurtyna_y == 0:
+            if self.stan_konca_gry == "WYGRANA":
+                tekst_glowny = "STAGE CLEAR"
+                kolor_tekstu = (0, 255, 0)
+            else:
+                tekst_glowny = "GAME OVER"
+                kolor_tekstu = (255, 0, 0)
+
+            napis_wynikowy = self.czcionka_duza.render(tekst_glowny, True, kolor_tekstu)
+            rect_napisu = napis_wynikowy.get_rect(center=(400, 260))
+            self.okno.blit(napis_wynikowy, rect_napisu)
+
+            tekst_dalej = self.czcionka_hud.render("PRESS ENTER TO CONTINUE", True, (255, 255, 255))
+            rect_dalej = tekst_dalej.get_rect(center=(400, 340))
+            self.okno.blit(tekst_dalej, rect_dalej)
+
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_RETURN] or keys[pygame.K_SPACE]:
+                self.kurtyna_aktywna = False
+                self.kurtyna_y = 600
+                
+                if self.stan_konca_gry == "WYGRANA":
+                    self.stan_gry = "PODSUMOWANIE_POZIOMU"
+                    self.podsumowanie_etap = 0
+                    self.podsumowanie_licznik = 0
+                    self.podsumowanie_ostatnia_zmiana = pygame.time.get_ticks() + 500 
+                    self.podsumowanie_typy = ["BasicTank", "FastTank", "ArmoredTank", "ShooterTank"]
+                    self.podsumowanie_gotowe = False
+                    self.wyswietlany_wynik = self.wynik_na_poczatku_poziomu
+                else:
+                    self.stan_gry = "KONIEC_GRY"
 
     def rysuj_hud(self):
-        pygame.draw.rect(self.okno, (80, 80, 80), (800, 0, 200, 600))
-        
+        pygame.draw.rect(self.okno, CIEMNY_SZARY, (800, 0, 200, 600))
         self.sekundy_w_rundzie = (pygame.time.get_ticks() - self.czas_startu_rundy) // 1000
 
-        tekst_poziom = self.czcionka_hud.render(f"STAGE: {self.aktualny_numer_poziomu + 1}", True, (255, 255, 255))
-        tekst_wynik = self.czcionka_hud.render(f"PTS: {self.wynik}", True, (255, 255, 255))
-        tekst_zycia = self.czcionka_hud.render(f"LIVES: {self.gracz.liczba_zyc}", True, (255, 255, 255))
+        tekst_poziom = self.czcionka_hud.render(f"STAGE: {self.aktualny_numer_poziomu + 1}", True, BIALY)
+        tekst_wynik = self.czcionka_hud.render(f"PTS: {self.wynik}", True, BIALY)
+        tekst_zycia = self.czcionka_hud.render(f"LIVES: {self.gracz.liczba_zyc}", True, BIALY)
+
+        self.okno.blit(tekst_poziom, (820, 40))
+        self.okno.blit(tekst_wynik, (820, 100))
+        self.okno.blit(tekst_zycia, (820, 160))
 
         obecny_czas = pygame.time.get_ticks()
         aktywne = []
         if getattr(self.gracz, 'tarcza_aktywna', False): aktywne.append("SHIELD")
         if obecny_czas < getattr(self.gracz, 'koniec_rapid_fire', 0): aktywne.append("RAPID")
-        if self.gracz.predkosc > 2: aktywne.append("SPEED")
+        if obecny_czas < getattr(self.gracz, 'koniec_speed', 0) or self.gracz.predkosc > 2: aktywne.append("SPEED")
         if hasattr(self, 'koniec_powiadomienia') and obecny_czas < getattr(self, 'koniec_powiadomienia', 0):
             aktywne.append(getattr(self, 'powiadomienie_bonus', ''))
 
-        napis_bonus = " + ".join(aktywne) if aktywne else "NONE"
-        kolor_bonusu = (255, 255, 0) if aktywne else (180, 180, 180)
-        tekst_bonus_label = self.czcionka_hud.render("POWERUP:", True, (255, 255, 255))
-        tekst_bonus_val = self.czcionka_hud.render(napis_bonus, True, kolor_bonusu)
+        tekst_bonus_label = self.czcionka_hud.render("POWERUPS:", True, BIALY)
+        self.okno.blit(tekst_bonus_label, (820, 240))
+
+        start_y_bonusow = 280  
+        odstep_y = 42
+
+        koordynaty_ikon = {
+            "SHIELD": (256, 112),
+            "SPEED":  (272, 112),
+            "RAPID":  (304, 112),
+            "BOMB":   (320, 112),
+            "1-UP":   (336, 112)
+        }
+
+        if aktywne:
+            for index, nazwa_bonusu in enumerate(aktywne):
+                obecne_y = start_y_bonusow + (index * odstep_y)
+                
+                if nazwa_bonusu in koordynaty_ikon:
+                    spr_x, spr_y = koordynaty_ikon[nazwa_bonusu]
+                    ikona_image = arkusz_grafik.pobierz_obrazek(
+                        x=spr_x, y=spr_y, szerokosc=16, wysokosc=16, rozmiar_docelowy=(32, 32)
+                    )
+                    self.okno.blit(ikona_image, (820, obecne_y))
+                
+                tekst_pojedynczy_bonus = self.czcionka_hud.render(str(nazwa_bonusu), True, ZOLTY)
+                self.okno.blit(tekst_pojedynczy_bonus, (865, obecne_y + 6))
+        else:
+            tekst_brak = self.czcionka_hud.render("NONE", True, JASNY_SZARY)
+            self.okno.blit(tekst_brak, (820, start_y_bonusow))
 
         wrogowie_lewa = len(self.kolejka_wrogow) + len(self.przeciwnicy)
-        tekst_wrogowie = self.czcionka_hud.render(f"ENEMIES: {wrogowie_lewa}", True, (255, 100, 100))
-
-        self.okno.blit(tekst_poziom, (820, 40))
-        self.okno.blit(tekst_wynik, (820, 100))
-        self.okno.blit(tekst_zycia, (820, 160))
-        
-        self.okno.blit(tekst_bonus_label, (820, 240))
-        self.okno.blit(tekst_bonus_val, (820, 270))
-        
-        self.okno.blit(tekst_wrogowie, (820, 360))
+        tekst_wrogowie = self.czcionka_hud.render(f"ENEMIES: {wrogowie_lewa}", True, JASNY_CZERWONY)
+        self.okno.blit(tekst_wrogowie, (820, 500))
 
     def rysowanie(self):
         self.okno.fill(CZARNY)
@@ -361,6 +418,43 @@ class Environment:
             napis = self.czcionka_duza.render(f"STAGE {self.aktualny_numer_poziomu + 1}", True, (255, 255, 255))
             self.okno.blit(napis, (SZEROKOSC_OKNA//2 - napis.get_width()//2, WYSOKOSC_OKNA//2 - napis.get_height()//2))
 
+        elif self.stan_gry == "PODSUMOWANIE_POZIOMU":
+            napis = self.czcionka_duza.render(f"STAGE {self.aktualny_numer_poziomu + 1} CLEARED!", True, (255, 255, 0))
+            self.okno.blit(napis, (SZEROKOSC_OKNA//2 - napis.get_width()//2, 80))
+            
+            y_offset = 180
+            suma_zabitych = 0
+            
+            for i in range(4):
+                if hasattr(self, 'podsumowanie_etap') and getattr(self, 'podsumowanie_etap', 0) >= i:
+                    typ = self.podsumowanie_typy[i]
+                    czysty_typ = typ.replace("Tank", "").upper()
+                    
+                    if self.podsumowanie_etap > i:
+                        ilosc_do_pokazania = self.zabite_czolgi.get(typ, 0)
+                        kolor = (150, 150, 150) 
+                    else:
+                        ilosc_do_pokazania = self.podsumowanie_licznik
+                        kolor = (255, 255, 255) 
+                        
+                    tekst = self.czcionka_hud.render(f"{czysty_typ} TANKS KILLED: {ilosc_do_pokazania}", True, kolor)
+                    self.okno.blit(tekst, (SZEROKOSC_OKNA//2 - tekst.get_width()//2, y_offset))
+                    suma_zabitych += ilosc_do_pokazania
+                y_offset += 40
+                    
+            if hasattr(self, 'podsumowanie_etap') and self.podsumowanie_etap >= 4:
+                y_offset += 20
+                tekst_suma = self.czcionka_hud.render(f"TOTAL KILLS IN STAGE: {suma_zabitych}", True, (255, 100, 100))
+                self.okno.blit(tekst_suma, (SZEROKOSC_OKNA//2 - tekst_suma.get_width()//2, y_offset))
+                
+                y_offset += 60
+                tekst_wynik = self.czcionka_hud.render(f"TOTAL SCORE: {getattr(self, 'wyswietlany_wynik', 0)}", True, (0, 255, 0))
+                self.okno.blit(tekst_wynik, (SZEROKOSC_OKNA//2 - tekst_wynik.get_width()//2, y_offset))
+            
+            if getattr(self, 'podsumowanie_gotowe', False):
+                restart = self.czcionka_hud.render("WCISNIJ SPACJE ABY KONTYNUOWAC", True, (255, 255, 255))
+                self.okno.blit(restart, (SZEROKOSC_OKNA//2 - restart.get_width()//2, 500))
+
         elif self.stan_gry == "KONIEC_GRY":
             napis = self.czcionka_duza.render("GAME OVER", True, (255, 0, 0))
             wynik = self.czcionka_hud.render(f"WYNIK KONCOWY: {self.wynik}", True, (255, 255, 255))
@@ -373,7 +467,7 @@ class Environment:
             self.okno.blit(restart, (SZEROKOSC_OKNA//2 - restart.get_width()//2, 420))
 
         elif self.stan_gry == "WYGRANA":
-            napis = self.czcionka_duza.render("WYGRALES!", True, (0, 255, 0))
+            napis = self.czcionka_duza.render("WYGRALES CALA GRE!", True, (0, 255, 0))
             wynik = self.czcionka_hud.render(f"WYNIK KONCOWY: {self.wynik}", True, (255, 255, 255))
             restart = self.czcionka_hud.render("WCISNIJ SPACJE ABY WROCIC DO MENU", True, (255, 255, 0))
             
@@ -387,8 +481,10 @@ class Environment:
                     obiekt.draw(self.okno)
             for obiekt in self.obiekty_w_grze:
                 if isinstance(obiekt, Bush):
-                    obiekt.draw(self.okno)
+                    obiekt.draw(self.okno)      
+            
             self.rysuj_hud()
+            self.obsluga_animacji_kurtyny()
 
         pygame.display.flip()
 

@@ -16,6 +16,11 @@ NIEBIESKI=(0,0,255)       #woda
 SZARY=(128,128,128)       #stalowa sciania
 POMARANCZOWY=(200,100,0)  #ceglana sciana
 CIEMNO_ZIELONY=(0,100,0)
+CIEMNY_SZARY = (80, 80, 80)     # t³o HUD-a
+JASNY_SZARY = (180, 180, 180)   # kolor, gdy brak powerupów
+ZOLTY = (255, 255, 0)           # aktywny powerup
+JASNY_CZERWONY = (255, 100, 100) # licznik wrogów
+
 
 #ruszanie (kierunki)
 KIERUNEK_GORA=(0,-1)

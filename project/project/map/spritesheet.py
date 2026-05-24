@@ -11,7 +11,7 @@ class SpriteSheet:
             if os.path.exists(self.pelna_sciezka):
                 self.arkusz = pygame.image.load(self.pelna_sciezka).convert_alpha()
             else:
-                print(f"B£¥D: Plik fizycznie nie istnieje pod œcie¿k¹: {self.pelna_sciezka}")
+                print(f"BLAD: Plik fizycznie nie istnieje pod sciezka: {self.pelna_sciezka}")
                 self.arkusz = False
 
         if not self.arkusz:
@@ -24,3 +24,6 @@ class SpriteSheet:
             obrazek = pygame.transform.scale(obrazek, (rozmiar_docelowy[0], rozmiar_docelowy[1]))
             
         return obrazek
+
+    #singleton
+arkusz_grafik=SpriteSheet('sprites.png')

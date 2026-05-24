@@ -2,16 +2,38 @@ import pygame
 from constants import KIERUNEK_GORA, KIERUNEK_DOL, KIERUNEK_LEWO, KIERUNEK_PRAWO, ROZMIAR_KAFELKA
 from entities.tank import Tank
 from entities.bullet import Bullet
+from map.spritesheet import arkusz_grafik
 
 class PlayerTank(Tank):
     def __init__(self, x, y):
         super().__init__(x, y, hp=1, kierunek=KIERUNEK_GORA, predkosc=2, cooldown_strzalu=500, poziom=1, liczba_zyc=3)
-        self.hitbox = pygame.Rect(self.x + 2, self.y + 2, ROZMIAR_KAFELKA - 4, ROZMIAR_KAFELKA - 4)
+        self.hitbox = pygame.Rect(self.x, self.y, ROZMIAR_KAFELKA, ROZMIAR_KAFELKA)
         self.ostatni_strzal = 0
         
+        self.bazowa_predkosc = 2
+        self.koniec_speed = 0
         self.tarcza_aktywna = False
         self.koniec_tarczy = 0
         self.koniec_rapid_fire = 0
+
+        self.kierunki_x = {
+            KIERUNEK_GORA: 0,
+            KIERUNEK_LEWO: 32,
+            KIERUNEK_DOL: 64,
+            KIERUNEK_PRAWO: 96
+        }
+
+        self.aktualizuj_grafike()
+
+    def aktualizuj_grafike(self):
+        pozycja_x = self.kierunki_x[self.kierunek]
+        self.image = arkusz_grafik.pobierz_obrazek(
+            x=pozycja_x,
+            y=0,
+            szerokosc=16,
+            wysokosc=16,
+            rozmiar_docelowy=(ROZMIAR_KAFELKA, ROZMIAR_KAFELKA)
+        )
 
     def update(self, sciany=None):
         obecny_czas = pygame.time.get_ticks()
@@ -23,8 +45,13 @@ class PlayerTank(Tank):
             self.cooldown_strzalu = 500
             self.koniec_rapid_fire = 0
 
+        if self.koniec_speed > 0 and obecny_czas > self.koniec_speed:
+            self.predkosc = self.bazowa_predkosc
+            self.koniec_speed = 0
+
         stary_x = self.x
         stary_y = self.y
+        stary_kierunek = self.kierunek
 
         keys = pygame.key.get_pressed()
 
@@ -41,8 +68,21 @@ class PlayerTank(Tank):
             self.x += self.predkosc
             self.kierunek = KIERUNEK_PRAWO
 
-        self.hitbox.x = self.x + 2
-        self.hitbox.y = self.y + 2
+        # --- AUTO-WYRÓWNANIE (Corner-cutting) ---
+        if self.kierunek != stary_kierunek:
+            if stary_kierunek in [KIERUNEK_GORA, KIERUNEK_DOL] and self.kierunek in [KIERUNEK_LEWO, KIERUNEK_PRAWO]:
+                reszta = self.y % 16
+                if reszta <= 8: self.y -= reszta
+                else: self.y += (16 - reszta)
+            elif stary_kierunek in [KIERUNEK_LEWO, KIERUNEK_PRAWO] and self.kierunek in [KIERUNEK_GORA, KIERUNEK_DOL]:
+                reszta = self.x % 16
+                if reszta <= 8: self.x -= reszta
+                else: self.x += (16 - reszta)
+            
+            self.aktualizuj_grafike()
+
+        self.hitbox.x = self.x
+        self.hitbox.y = self.y
 
         kolizja = False
         if sciany:
@@ -54,8 +94,15 @@ class PlayerTank(Tank):
         if kolizja or self.x < 0 or self.x > 800 - ROZMIAR_KAFELKA or self.y < 0 or self.y > 600 - ROZMIAR_KAFELKA:
             self.x = stary_x
             self.y = stary_y
-            self.hitbox.x = self.x + 2
-            self.hitbox.y = self.y + 2
+            
+            # Wa¿ne: Jeœli skrêci³ za wczeœnie i uderzy³ w œcianê, wraca do poprzedniego kierunku.
+            # Pozwala to "œlizgaæ siê" po œcianie a¿ do momentu, w którym otwór bêdzie dostêpny.
+            if self.kierunek != stary_kierunek:
+                self.kierunek = stary_kierunek
+                self.aktualizuj_grafike()
+                
+            self.hitbox.x = self.x
+            self.hitbox.y = self.y
 
     def strzelaj(self):
         obecny_czas = pygame.time.get_ticks()
@@ -67,9 +114,10 @@ class PlayerTank(Tank):
         return None
 
     def draw(self, okno):
-        # Rysujemy ¿ó³ty czo³g
-        pygame.draw.rect(okno, (255, 255, 0), self.hitbox)
-        
-        # Ochronna ramka tarczy, jeœli jest aktywna
+        if hasattr(self, 'image') and self.image:
+            okno.blit(self.image, (self.x, self.y))
+        else:
+            pygame.draw.rect(okno, (255, 255, 0), self.hitbox)
+
         if self.tarcza_aktywna:
             pygame.draw.rect(okno, (255, 255, 255), self.hitbox, 4)
